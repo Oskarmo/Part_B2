@@ -1,7 +1,7 @@
 from unittest import TestCase, main
 from smarthouse.domain import SmartHouse
 from demo_house import DEMO_HOUSE as h
-import uuid
+
 class TestPartA(TestCase):
 
     # Level 1 Basic: Does registration of floors, rooms, and devices work + simple queries about them
@@ -21,7 +21,7 @@ class TestPartA(TestCase):
         # device that exists
         l = h.get_device_by_id("4d8b1d62-7921-4917-9b70-bbd31f6e2e8e")
         self.assertIsNotNone(l)
-        self.assertEqual(l.device_id, "4d8b1d62-7921-4917-9b70-bbd31f6e2e8e")
+        self.assertEqual(l.id, "4d8b1d62-7921-4917-9b70-bbd31f6e2e8e")
         self.assertTrue(l in h.get_devices())
 
 
@@ -29,19 +29,19 @@ class TestPartA(TestCase):
 
     def test_intermediate_device_attributes(self):
         motion_sensor = h.get_device_by_id("cd5be4e8-0e6b-4cb5-a21f-819d06cf5fc5")
-        self.assertEqual(motion_sensor.device_id, "cd5be4e8-0e6b-4cb5-a21f-819d06cf5fc5")
+        self.assertEqual(motion_sensor.id, "cd5be4e8-0e6b-4cb5-a21f-819d06cf5fc5")
         self.assertEqual(motion_sensor.device_type, "Motion Sensor")
         self.assertEqual(motion_sensor.supplier, "NebulaGuard Innovations")
         self.assertEqual(motion_sensor.model_name, "MoveZ Detect 69")
-        self.assertTrue(motion_sensor.is_sensor) #fjernet () fra opprinnelig test
-        self.assertFalse(motion_sensor.is_actuator) # ---// ---
+        self.assertTrue(motion_sensor.is_sensor())
+        self.assertFalse(motion_sensor.is_actuator())
         bulp = h.get_device_by_id("6b1c5f6b-37f6-4e3d-9145-1cfbe2f1fc28")
-        self.assertEqual(bulp.device_id, "6b1c5f6b-37f6-4e3d-9145-1cfbe2f1fc28")
+        self.assertEqual(bulp.id, "6b1c5f6b-37f6-4e3d-9145-1cfbe2f1fc28")
         self.assertEqual(bulp.device_type, "Light Bulp")
         self.assertEqual(bulp.supplier, "Elysian Tech")
         self.assertEqual(bulp.model_name, "Lumina Glow 4000")
-        self.assertTrue(bulp.is_actuator) # --- // ---
-        self.assertFalse(bulp.is_sensor)#---// ---
+        self.assertTrue(bulp.is_actuator())
+        self.assertFalse(bulp.is_sensor())
         # also they know about their room and rooms know about their devices
         living_room = motion_sensor.room
         self.assertTrue(motion_sensor in living_room.devices)
@@ -53,9 +53,6 @@ class TestPartA(TestCase):
         # Measurements are recorded in celsius and values a floating point numbers
         self.assertEqual(m.unit, "°C")
         self.assertEqual(type(m.value), type(0.0))
-        print(f"Unit: {m.unit}")
-        self.assertEqual(m.unit, "°C")
-
 
     def test_intermediate_actuator_state_change(self):
         # actuators can be turned on and off
@@ -89,7 +86,7 @@ class TestPartA(TestCase):
         self.assertEqual(len(gr2.devices), 1)
         self.assertEqual(gr2, bulp.room)
 
-        # moving the device
+        # moving the device 
         h.register_device(dresser, bulp)
 
         # after
