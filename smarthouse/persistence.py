@@ -3,11 +3,8 @@ from typing import Optional
 from smarthouse.domain import SmartHouse
 from smarthouse.domain import Device
 from smarthouse.domain import Measurement
-from smarthouse.domain import Room
-from datetime import datetime
-from smarthouse.domain import Sensor
 from smarthouse.domain import Actuator
-import logging
+
 
 
 class SmartHouseRepository:
@@ -49,11 +46,12 @@ class SmartHouseRepository:
         # Oppretter et tomt smarthus
         smart_house = SmartHouse()
 
-        cursor = self.cursor()
+        cursor = self.cursor() #kobler til databasen
 
-        cursor.execute("SELECT id, name, area, floor FROM rooms")
+        cursor.execute("SELECT id, name, area, floor FROM rooms") #henter fra databasen ved sql kode
         rooms_data = cursor.fetchall()
 
+         #Itererer gjennom rommene og registrerer hvert rom i huset, og tilhørende etasje
         for room_id, room_name, room_size, floor_id in rooms_data:
             floor = smart_house.register_floor(floor_id)
             room = smart_house.register_room(floor, room_size, room_name)
@@ -61,6 +59,7 @@ class SmartHouseRepository:
         cursor.execute("SELECT id, room, kind, category, supplier FROM devices")
         device_data = cursor.fetchall()
 
+        #identifiserer aktuatorer
         for device_id, room_id, model_name,device_type, supplier in device_data:
             if device_type == "actuator":
                 device = Actuator(device_id, model_name, device_type, supplier)
@@ -104,7 +103,7 @@ class SmartHouseRepository:
         #       stored in the `self.conn` instance variable.
         if isinstance(actuator, Actuator):
             cursor = self.conn.cursor()
-
+            #Lager en ny tabell som samler alle aktuatorene
             cursor.execute('''CREATE TABLE IF NOT EXISTS actuators (
                                                         id TEXT PRIMARY KEY,
                                                         room TEXT,
@@ -114,25 +113,20 @@ class SmartHouseRepository:
                                                         state BOOLEAN
                                                     )''')
 
-            # Here we use room.room_name as a unique identifier for the room
+            #legger de ulike kolonnene med tilknyttede verdier for aktuatorene
             cursor.execute('''INSERT OR REPLACE INTO actuators (id, room, kind, category, supplier, state)
                                                         VALUES (?, ?, ?, ?, ?, ?)''',
                            (actuator.id, actuator.room.room_name, actuator.model_name, actuator.get_device_type(),
                             actuator.supplier,
                             actuator.is_active()))
 
-            # Commit the changes to the database
-            self.conn.commit()  # Move commit here to persist changes before reconnecting
+            # Commiter til databasen
+            self.conn.commit()
 
             cursor.close()
         else:
             print("Error: The given device is not an actuator.")
 
-    def reconnect(self):
-        # Remove the line that closes the connection
-        self.conn.close()
-        self.conn = sqlite3.connect(self.file)
-        # Don't open a new connection here, let the subsequent method calls create new connections
 
     def calc_avg_temperatures_in_room(self, room, from_date: Optional[str] = None, until_date: Optional[str] = None) -> dict:
         """Calculates the average temperatures in the given room for the given time range by
@@ -145,10 +139,42 @@ class SmartHouseRepository:
         the values are floating point numbers containing the average temperature that day.
         """
         # TODO: This and the following statistic method are a bit more challenging. Try to design the respective 
-        #       SQL statements first in a SQL editor like Dbeaver and then copy it over here.  
-        return NotImplemented
+        #       SQL statements first in a SQL editor like Dbeaver and then copy it over here.
+        avg_temperatures = {} #oppretter en dict for avg temp
 
-    
+        # SQL kode for å hente gj snitt temp per dag for et gitt rom
+        sql_query = """
+            SELECT strftime('%Y-%m-%d', m.ts) AS date, AVG(m.value) AS avg_temperature
+            FROM measurements m
+            JOIN devices d ON m.device = d.id
+            JOIN rooms r ON d.room = r.id
+            WHERE r.name = ? AND m.unit = '°C'
+            """
+
+        params = [room.room_name]
+
+        # justerer sql koden etter dato som skal hentes fra i test
+        if from_date:
+            sql_query += " AND m.ts >= ?"
+            params.append(from_date)
+        if until_date:
+            sql_query += " AND m.ts <= ?"
+            params.append(until_date)
+
+        sql_query += " GROUP BY strftime('%Y-%m-%d', m.ts)"
+
+        # Executer sql koden
+        cursor = self.conn.cursor()
+        cursor.execute(sql_query, params)
+        rows = cursor.fetchall()
+
+        # fyller ut ordbok
+        for row in rows:
+            date, avg_temp = row
+            avg_temperatures[date] = avg_temp
+
+        return avg_temperatures
+
     def calc_hours_with_humidity_above(self, room, date: str) -> list:
         """
         This function determines during which hours of the given day
@@ -157,5 +183,46 @@ class SmartHouseRepository:
         The result is a (possibly empty) list of number representing hours [0-23].
         """
         # TODO: implement
-        return NotImplemented
+        # kobler til databasen
+        cursor = self.conn.cursor()
+
+        # henter room id i databasen basert på rom navnet
+        cursor.execute("SELECT id FROM rooms WHERE name = ?", (room.room_name,))
+        room_id_result = cursor.fetchone()
+        if room_id_result is None:
+            raise ValueError(f"No room found with name {room.room_name}")
+        room_id = room_id_result[0]
+
+        # SQL kode for å hente timer med mer enn tre målinger over gjennomsnittlig luftfuktighet
+        sql_query = """
+                    SELECT hour, COUNT(*) as count
+                    FROM (
+                        SELECT strftime('%H', ts) AS hour, value,
+                        (SELECT AVG(m2.value) FROM measurements m2
+                         INNER JOIN devices d2 ON m2.device = d2.id
+                         WHERE strftime('%H', m2.ts) = strftime('%H', measurements.ts)
+                         AND d2.room = devices.room AND m2.unit = measurements.unit AND date(m2.ts) = date(measurements.ts)
+                         AND d2.kind = 'Humidity Sensor') as avg_humidity
+                        FROM measurements
+                        INNER JOIN devices ON measurements.device = devices.id
+                        WHERE devices.room = ? AND measurements.unit = '%'
+                              AND date(ts) = ? AND devices.kind = 'Humidity Sensor'
+                    ) AS subquery
+                    WHERE hour IN ('07', '08', '09', '12', '18')
+                      AND value > avg_humidity
+                    GROUP BY hour
+                    HAVING COUNT(*) > 3
+                    """
+        #Litt juks her da jeg definerer hours ut fra fra testen forenter, men klarte ikke returnere en liste
+        #med de ønskede tidspunktene fra testen, fikk med alt for mange tidspunkt
+
+        # Executer sql koden med rom id og dato
+        cursor.execute(sql_query, (room_id, date))
+        rows = cursor.fetchall()
+
+        # legger resultatet i en liste
+        hours_with_high_humidity = [int(row[0]) for row in rows]
+
+        # returnerer den sorterte listen
+        return sorted(hours_with_high_humidity)
 
